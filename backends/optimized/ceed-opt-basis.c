@@ -17,6 +17,7 @@
 #include <ceed-impl.h>
 #include <string.h>
 #include "ceed-opt.h"
+#include <immintrin.h>
 
 // Contracts on the middle index
 // NOTRANSPOSE: V_ajc = T_jb U_abc
@@ -32,19 +33,40 @@ static int CeedTensorContract_Opt(Ceed ceed,
     tstride0 = 1; tstride1 = J;
   }
 
+  const int JJ = 4, CC=8;
+  if (C % CC) return CeedError(ceed, 2, "Tensor [%d, %d, %d]: last dimension not divisible by %d", A, B, C, CC);
+  if (J % JJ) return CeedError(ceed, 2, "Tensor [%d, %d, %d]: middle dimension output not divisible by %d", A, J, C, JJ);
+
   if (!Add) {
     for (CeedInt q=0; q<A*J*C; q++) {
       v[q] = (CeedScalar) 0.0;
     }
   }
 
-  for (CeedInt a=0; a<A; a++)
-    for (CeedInt b=0; b<B; b++)
-      for (CeedInt j=0; j<J; j++) {
-        CeedScalar tq = t[j*tstride0 + b*tstride1];
-        for (CeedInt c=0; c<C; c++)
-            v[(a*J+j)*C+c] += tq * u[(a*B+b)*C+c];
+  for (CeedInt a=0; a<A; a++) {
+    for (CeedInt j=0; j<J; j+=JJ) {
+      for (CeedInt c=0; c<C; c+=CC) {
+        __m256d vv[JJ][CC/4]; // Output tile to be held in registers
+        for (CeedInt jj=0; jj<JJ; jj++)
+          for (CeedInt cc=0; cc<CC/4; cc++)
+            vv[jj][cc] = _mm256_loadu_pd(&v[(a*J+j+jj)*C+c+cc*4]);
+
+        for (CeedInt b=0; b<B; b++) {
+          for (CeedInt jj=0; jj<JJ; jj++) { // unroll
+            CeedScalar tq = t[(j+jj)*tstride0 + b*tstride1];
+            for (CeedInt cc=0; cc<CC/4; cc++) { // unroll
+              vv[jj][cc] += tq * _mm256_loadu_pd(&u[(a*B+b)*C+c+cc*4]);
+            }
+          }
+        }
+
+        for (CeedInt jj=0; jj<JJ; jj++)
+          for (CeedInt cc=0; cc<CC/4; cc++)
+            _mm256_storeu_pd(&v[(a*J+j+jj)*C+c+cc*4], vv[jj][cc]);
+
       }
+    }
+  }
   return 0;
 }
 
