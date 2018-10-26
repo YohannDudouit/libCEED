@@ -767,7 +767,7 @@ c-----------------------------------------------------------------------
       common /vcrvh/ h1(lt),h2(ld),pap(3)
       logical ifh3
       integer*8 ndof
-      integer ceed,err
+      integer ceed,err,test
       character*64 spec
 
       integer p,q,ncomp,edof,ldof
@@ -783,6 +783,7 @@ c-----------------------------------------------------------------------
 
 c     Init ceed library
       call get_spec(spec)
+      call get_test(test)
       call ceedinit(trim(spec),ceed,err)
 
       call geodat1n  ! Set up gf() arrays
@@ -906,6 +907,12 @@ c     Create a ceed operator
       if (nid.eq.0) write(6,3) lx1,nelgv,er1,er2,er3,' error c',maxit3
    3  format(i3,i9,1p3e12.4,1x,a8,i9)
 
+      if (test.eq.1) then
+        if (dabs(er1)>1E-6 .or. dabs(er2)>1E-6 .or. dabs(er3)>1E-6) then
+          write(6,*) "ERROR IS TOO LARGE"
+        endif
+      endif
+
       n = nx1*ny1*nz1*nelgt
       telaps = telaps/(3)
 
@@ -1024,6 +1031,19 @@ c-----------------------------------------------------------------------
       spec = '/cpu/self'
       if(iargc().ge.1) then
         call getarg(1, spec)
+      endif
+      end
+c-----------------------------------------------------------------------
+      subroutine get_test(test)
+      integer i, test
+      character*64 testval
+
+      test=0
+      if(iargc().ge.2) then
+        call getarg(2, testval)
+      endif
+      if(testval.eq."test") then
+        test=1
       endif
       end
 c-----------------------------------------------------------------------
