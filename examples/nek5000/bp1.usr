@@ -907,7 +907,7 @@ c     Create a ceed operator
       if (nid.eq.0) write(6,3) lx1,nelgv,er1,er2,er3,' error c',maxit3
    3  format(i3,i9,1p3e12.4,1x,a8,i9)
 
-      if (test.eq.1) then
+      if (test.eq.1.and.nid.eq.0) then
         if (dabs(er1)>1E-6 .or. dabs(er2)>1E-6 .or. dabs(er3)>1E-6) then
           write(6,*) "ERROR IS TOO LARGE"
         endif

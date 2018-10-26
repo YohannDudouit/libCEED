@@ -505,7 +505,7 @@ c-----------------------------------------------------------------------
 
       logical ifh3
       integer*8 ndof
-      integer ceed,err
+      integer ceed,err,test
       character*64 spec
 
       integer p,q,ncomp,edof,ldof
@@ -521,6 +521,7 @@ c-----------------------------------------------------------------------
 
 c     Init ceed library
       call get_spec(spec)
+      call get_test(test)
       call ceedinit(trim(spec)//char(0),ceed,err)
 
       nzq    = nx1+1
@@ -638,6 +639,15 @@ c     Create a ceed operator
       tstop  = dnekclock()
       telaps = (tstop-tstart)
       maxits = maxit
+      er1 = glrdif(u1,e1,n)
+      if (nid.eq.0) write(6,3) lx1,nelgv,er1,' error ',maxit
+   3  format(i3,i9,e12.4,1x,a8,i9)
+
+      if (test.eq.1.and.nid.eq.0) then
+        if (dabs(er1)>1E-4) then
+          write(6,*) "ERROR IS TOO LARGE"
+        endif
+      endif
 
       nio    = nid
       nx     = nx1-1
@@ -1202,6 +1212,19 @@ c-----------------------------------------------------------------------
       spec = '/cpu/self'
       if(iargc().ge.1) then
         call getarg(1, spec)
+      endif
+      end
+c-----------------------------------------------------------------------
+      subroutine get_test(test)
+      integer i, test
+      character*64 testval
+
+      test=0
+      if(iargc().ge.2) then
+        call getarg(2, testval)
+      endif
+      if(testval.eq."test") then
+        test=1
       endif
       end
 c-----------------------------------------------------------------------
