@@ -783,8 +783,9 @@ c-----------------------------------------------------------------------
 
 c     Init ceed library
       call get_spec(spec)
-      call get_test(test)
       call ceedinit(trim(spec),ceed,err)
+
+      call get_test(test)
 
       call geodat1n  ! Set up gf() arrays
 

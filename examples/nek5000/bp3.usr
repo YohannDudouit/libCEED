@@ -385,6 +385,14 @@ c-----------------------------------------------------------------------
       include 'TOTAL'
       real x, y, z
       real e(1), r(1)
+      real c1,c2,c3,k1,k2,k3
+
+      c1=-0.5
+      c2=1.5
+      c3=0.5
+      k1=1.0
+      k2=2.0
+      k3=3.0
 
       n=lx1*ly1*lz1*nelt
       one = 1.
@@ -394,9 +402,8 @@ c-----------------------------------------------------------------------
         x=xm1(i,1,1,1)
         y=ym1(i,1,1,1)
         z=zm1(i,1,1,1)
-        e(i) = sin(pi*x)*sin(pi*y)*sin(pi*z)
-        r(i) = ((pi*pi)*3)*e(i)
-
+        e(i) = sin(pi*(c1+k1*x))*sin(pi*(c2+k2*y))*sin(pi*(c3+k3*z))
+        r(i) = (pi*pi*(k1*k1+k2*k2+k3*k3))*e(i)
       enddo
 
       call dsavg(e)  ! This is requisite for random fields
@@ -521,8 +528,9 @@ c-----------------------------------------------------------------------
 
 c     Init ceed library
       call get_spec(spec)
-      call get_test(test)
       call ceedinit(trim(spec)//char(0),ceed,err)
+
+      call get_test(test)
 
       nzq    = nx1+1
       call geodatq    (gf,bmq,w3mq,nzq)
@@ -532,8 +540,9 @@ c     Init ceed library
       ifield = 1
       n      = nx1*ny1*nz1*nelt
 
-      call rand_fld_h1 (e1)
+      call sin_fld_h1 (e1,r1)
 
+      call xmask1        (e1,nelt)
       call axhm1_bp3_orig(pap,r1,e1,h1,h2,'bp3')   ! r1 = A*e1
       call dssum         (r1,nx1,ny1,nz1)
       call xmask1        (r1,nelt)
