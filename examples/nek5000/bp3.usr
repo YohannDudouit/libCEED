@@ -1170,8 +1170,8 @@ c     Helmholtz equations
       return
       end
 c-----------------------------------------------------------------------
-      subroutine axhm1_bp3(pap,ap1,p1,h1,h2,ceed,op_diffusion,vec_ap1,
-     $  vec_p1,vec_qdata)
+      subroutine axhm1_bp3(pap,ap1,p1,h1,h2,ceed,op_diffusion,
+     $  vec_ap1,vec_p1,vec_qdata)
 
       include 'ceedf.h'
 
@@ -1181,18 +1181,15 @@ c     Helmholtz equations
       include 'SIZE'
       include 'TOTAL'
 
-      parameter (lzq=lx1+1)
-      parameter (lx=lx1*ly1*lz1,lg=3+3*(ldim-2),lq=lzq**ldim)
-      common /bpgfactors/ gf(lg*lq,lelt),bmq(lq,lelt),w3mq(lq)
+      parameter (lx=lx1*ly1*lz1,lg=3+3*(ldim-2))
+      real         gf(lg,lx,lelt)             ! Equivalence new gf() data
+      equivalence (gf,g1m1)                   ! layout to g1m1...g6m1
+
 
       real ap1(lx,lelt)
       real  p1(lx,lelt)
-      integer ceed,op_diffusion,vec_p1,vec_ap1,vec_qdata
-      integer*8 offset
-
-      common /ctmp1/ ur,us,ut,wk
-      real ur(lq),us(lq),ut(lq),wk(lq)
-
+      real  h1(lx,lelt), h2(lx,lelt)
+      integer ceed,op_diffusion,vec_ap1,vec_p1,vec_qdata,err
       integer i,e
 
       call ceedvectorsetarray(vec_p1,ceed_mem_host,ceed_use_pointer,
@@ -1207,7 +1204,7 @@ c     Helmholtz equations
 
       do e=1,nelt
          do i=1,lx
-           pap=pap+p1(i,e)*ap1(i,e)
+           pap=pap+ap1(i,e)*p1(i,e)
          enddo
       enddo
 

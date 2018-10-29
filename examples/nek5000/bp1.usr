@@ -983,15 +983,12 @@ c     Helmholtz equations
       call ceedoperatorapply(op_mass,vec_p1,vec_ap1,
      $  ceed_request_immediate,err)
 
-      pap=0
+      pap=0.
 
-      nxq = nx1+1
-      k=1
       do e=1,nelt
          do i=1,lx
            pap=pap+ap1(i,e)*p1(i,e)
          enddo
-         k=k+nxq*nxq*nxq
       enddo
 
       return
