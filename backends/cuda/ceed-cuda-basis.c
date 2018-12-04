@@ -202,7 +202,6 @@ extern "C" __global__ void interp(const CeedInt nelem, const int transpose, cons
 {
     real r_V[Q1D*Q1D*Q1D];
     real r_t[Q1D*Q1D*Q1D];
-    __shared__ real s_M[32*Q1D*Q1D*Q1D];
 
     const int tid = threadIdx.x;
     const int bid = blockIdx.x;
@@ -210,25 +209,20 @@ extern "C" __global__ void interp(const CeedInt nelem, const int transpose, cons
   if(bid<nelem){
 #pragma unroll
     for (int i = 0; i < P1D*P1D*P1D; i++)
-      s_M[i + tid*P1D*P1D*P1D] = d_U[bid*32*P1D*P1D*P1D + 32*i + tid];
-#pragma unroll
-    for (int i = 0; i < P1D*P1D*P1D; i++)
-      r_V[i] = s_M[i + tid*P1D*P1D*P1D];
+      r_V[i] = d_U[bid*32*P1D*P1D*P1D + 32*i + tid];
 
     if(!transpose){
       Contract(r_V, c_B, P1D, P1D, P1D, P1D, Q1D, r_t);
       Contract(r_t, c_B, P1D, P1D, Q1D, P1D, Q1D, r_V); 
       Contract(r_V, c_B, P1D, Q1D, Q1D, P1D, Q1D, r_t);
     } else {
-      ContractTranspose(r_t, c_B, Q1D, Q1D, Q1D, P1D, Q1D, r_V);
-      ContractTranspose(r_V, c_B, Q1D, Q1D, P1D, P1D, Q1D, r_t);
-      ContractTranspose(r_t, c_B, Q1D, P1D, P1D, P1D, Q1D, r_V);
+      ContractTranspose(r_V, c_B, Q1D, Q1D, Q1D, P1D, Q1D, r_t);
+      ContractTranspose(r_t, c_B, Q1D, Q1D, P1D, P1D, Q1D, r_V);
+      ContractTranspose(r_V, c_B, Q1D, P1D, P1D, P1D, Q1D, r_t);
     }
     
-#pragma unroll
-    for (int i = 0; i < P1D*P1D*P1D; i++) s_M[i + tid*P1D*P1D*P1D] = r_V[i];
 #pragma unroll 
-    for (int i = 0; i < P1D*P1D*P1D; i++) d_V[bid*32*P1D*P1D*P1D + i*32 + tid] = s_M[i*32 + tid];
+    for (int i = 0; i < P1D*P1D*P1D; i++) d_V[bid*32*P1D*P1D*P1D + i*32 + tid] = r_t[i];
   }
 }   
 
@@ -289,7 +283,7 @@ int CeedBasisApply_Cuda_3dreg(CeedBasis basis, const CeedInt nelem, CeedTranspos
   const CeedInt transpose = tmode == CEED_TRANSPOSE;
   const int warpsize  = 32;
   const int blocksize = warpsize;
-  const int gridsize  = nelem + ( (nelem/warpsize*warpsize<nelem)? 1 : 0 );
+  const int gridsize  = nelem/warpsize + ( (nelem/warpsize*warpsize<nelem)? 1 : 0 );
 
   const CeedScalar *d_u;
   CeedScalar *d_v;
@@ -305,6 +299,7 @@ int CeedBasisApply_Cuda_3dreg(CeedBasis basis, const CeedInt nelem, CeedTranspos
     CeedScalar* c_B;
     ierr = initInterp(data->d_interp1d, basis->P1d, basis->Q1d, &c_B); CeedChk(ierr);
     void *interpargs[] = {(void*)&nelem, (void*)&transpose, &c_B, &d_u, &d_v};
+    //void *interpargs[] = {(void*)&nelem, (void*)&transpose, &data->d_interp1d, &d_u, &d_v}; 
     ierr = run_kernel(ceed, data->interp, gridsize, blocksize, interpargs); CeedChk(ierr);
   } else if (emode == CEED_EVAL_GRAD) {
     // void *gradargs[] = {(void*)&nelem, (void*)&transpose, &data->d_interp1d, &data->d_grad1d, &d_u, &d_v};
@@ -359,16 +354,6 @@ int CeedBasisCreateTensorH1_Cuda(CeedInt dim, CeedInt P1d, CeedInt Q1d,
 
   ierr = cudaMalloc((void**)&data->d_grad1d, iBytes); CeedChk(ierr);
   ierr = cudaMemcpy(data->d_grad1d, basis->grad1d, iBytes, cudaMemcpyHostToDevice); CeedChk(ierr);
-
-  // ierr = compile(basis->ceed, basiskernels, &data->module, 7,
-  //     "Q1D", basis->Q1d,
-  //     "P1D", basis->P1d,
-  //     "BASIS_BUF_LEN", basis->ncomp * CeedIntPow(basis->Q1d > basis->P1d ? basis->Q1d : basis->P1d, basis->dim),
-  //     "BASIS_DIM", basis->dim,
-  //     "BASIS_NCOMP", basis->ncomp,
-  //     "BASIS_ELEMSIZE", CeedIntPow(basis->P1d, basis->dim),
-  //     "BASIS_NQPT", CeedIntPow(basis->Q1d, basis->dim)
-  //     ); CeedChk(ierr);
 
   ierr = compile(basis->ceed, kernels3dreg, &data->module, 7,
       "Q1D", basis->Q1d,
