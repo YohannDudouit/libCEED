@@ -160,6 +160,18 @@ static const char *kernels3dreg = QUOTE(
 
 typedef double real;
 
+inline __device__ void readDofs(const int bid, const int tid, const int comp, const int size, const CeedScalar* d_U, real* r_U) {
+#pragma unroll
+      for (int i = 0; i < size; i++)
+        r_U[i] = d_U[bid*32*size + tid*BASIS_NCOMP*size + comp*size + i];
+}
+
+inline __device__ void writeDofs(const int bid, const int tid, const int comp, const int size, const CeedScalar* r_V, real* d_V) {
+#pragma unroll 
+      for (int i = 0; i < size; i++)
+        d_V[bid*32*size + tid*size*BASIS_NCOMP + comp*size + i] = r_V[i];
+}
+
 //****
 // 1D
 inline __device__ void Contract1d(const real *A, const real *B,
@@ -201,27 +213,20 @@ inline __device__ void interp1d(const CeedInt nelem, const int transpose, const 
   const int bid = blockIdx.x;
 
   if(bid*32+tid<nelem){
-    int size = !transpose? P1D : Q1D;
-#pragma unroll
-    for (int i = 0; i < size; i++)
-      r_V[i] = d_U[bid*32*size + size*tid + i];
-//#pragma unroll
-//    for (int i = 0; i < size; i++)
-//      r_V[i] = d_U[bid*32*P1D + 32*i + tid];
+    for(int comp=0; comp<BASIS_NCOMP; comp++) {
+      int size = !transpose? P1D : Q1D;
+      readDofs(bid, tid, comp, size, d_U, r_V);
 
-    if(!transpose){
-      Contract1d(r_V, c_B, P1D, P1D, Q1D, r_t);
-    } else {
-      ContractTranspose1d(r_V, c_B, Q1D, P1D, Q1D, r_t);
-    }
+      if(!transpose){
+        Contract1d(r_V, c_B, P1D, P1D, Q1D, r_t);
+      } else {
+        ContractTranspose1d(r_V, c_B, Q1D, P1D, Q1D, r_t);
+      }
     
-    size = transpose? P1D : Q1D;
-//#pragma unroll 
-//    for (int i = 0; i < size; i++) d_V[bid*32*size + i*32 + tid] = r_t[i];
-//  }  
-#pragma unroll 
-    for (int i = 0; i < size; i++) d_V[bid*32*size + tid*size + i] = r_t[i];
-  }  
+      size = transpose? P1D : Q1D;
+      writeDofs(bid, tid, comp, size, r_t, d_V);
+    }
+  }
 }
 
 //****
@@ -269,27 +274,21 @@ inline __device__ void interp2d(const CeedInt nelem, const int transpose, const 
   const int bid = blockIdx.x;
 
   if(bid*32+tid<nelem){
-    int size = !transpose? P1D*P1D : Q1D*Q1D;
-//#pragma unroll
-//    for (int i = 0; i < size; i++)
-//      r_V[i] = d_U[bid*32*size + 32*i + tid];
-#pragma unroll
-    for (int i = 0; i < size; i++)
-      r_V[i] = d_U[bid*32*size + tid*size + i];
+    for(int comp=0; comp<BASIS_NCOMP; comp++) {
+      int size = !transpose? P1D*P1D : Q1D*Q1D;
+      readDofs(bid, tid, comp, size, d_U, r_V);
 
-    if(!transpose){
-      Contract2d(r_V, c_B, P1D, P1D, P1D, Q1D, r_t);
-      Contract2d(r_t, c_B, P1D, Q1D, P1D, Q1D, r_V);
-    } else {
-      ContractTranspose2d(r_V, c_B, Q1D, Q1D, P1D, Q1D, r_t);
-      ContractTranspose2d(r_t, c_B, Q1D, P1D, P1D, Q1D, r_V);
-    }
+      if(!transpose){
+        Contract2d(r_V, c_B, P1D, P1D, P1D, Q1D, r_t);
+        Contract2d(r_t, c_B, P1D, Q1D, P1D, Q1D, r_V);
+      } else {
+        ContractTranspose2d(r_V, c_B, Q1D, Q1D, P1D, Q1D, r_t);
+        ContractTranspose2d(r_t, c_B, Q1D, P1D, P1D, Q1D, r_V);
+      }
     
-    size = transpose? P1D*P1D : Q1D*Q1D;
-//#pragma unroll 
-//    for (int i = 0; i < size; i++) d_V[bid*32*size + i*32 + tid] = r_V[i];
-#pragma unroll 
-    for (int i = 0; i < P1D*P1D; i++) d_V[bid*32*P1D*P1D + tid*P1D*P1D + i] = r_V[i];
+      size = transpose? P1D*P1D : Q1D*Q1D;
+      writeDofs(bid, tid, comp, size, r_V, d_V);
+    }
   }  
 }
 
@@ -342,24 +341,23 @@ inline __device__ void interp3d(const CeedInt nelem, const int transpose, const 
   const int bid = blockIdx.x;
 
   if(bid*32+tid<nelem){
-    int size = !transpose? P1D*P1D*P1D : Q1D*Q1D*Q1D;
-#pragma unroll
-    for (int i = 0; i < size; i++)
-      r_V[i] = d_U[bid*32*size + tid*size + i];
+    for(int comp=0; comp<BASIS_NCOMP; comp++) {
+      int size = !transpose? P1D*P1D*P1D : Q1D*Q1D*Q1D;
+      readDofs(bid, tid, comp, size, d_U, r_V);
 
-    if(!transpose){
-      Contract3d(r_V, c_B, P1D, P1D, P1D, P1D, Q1D, r_t);
-      Contract3d(r_t, c_B, P1D, P1D, Q1D, P1D, Q1D, r_V); 
-      Contract3d(r_V, c_B, P1D, Q1D, Q1D, P1D, Q1D, r_t);
-    } else {
-      ContractTranspose3d(r_V, c_B, Q1D, Q1D, Q1D, P1D, Q1D, r_t);
-      ContractTranspose3d(r_t, c_B, Q1D, Q1D, P1D, P1D, Q1D, r_V);
-      ContractTranspose3d(r_V, c_B, Q1D, P1D, P1D, P1D, Q1D, r_t);
+      if(!transpose){
+        Contract3d(r_V, c_B, P1D, P1D, P1D, P1D, Q1D, r_t);
+        Contract3d(r_t, c_B, P1D, P1D, Q1D, P1D, Q1D, r_V); 
+        Contract3d(r_V, c_B, P1D, Q1D, Q1D, P1D, Q1D, r_t);
+      } else {
+        ContractTranspose3d(r_V, c_B, Q1D, Q1D, Q1D, P1D, Q1D, r_t);
+        ContractTranspose3d(r_t, c_B, Q1D, Q1D, P1D, P1D, Q1D, r_V);
+        ContractTranspose3d(r_V, c_B, Q1D, P1D, P1D, P1D, Q1D, r_t);
+      }
+ 
+      size = transpose? P1D*P1D*P1D : Q1D*Q1D*Q1D;
+      writeDofs(bid, tid, comp, size, r_t, d_V);
     }
-    
-    size = transpose? P1D*P1D*P1D : Q1D*Q1D*Q1D;
-#pragma unroll 
-    for (int i = 0; i < size; i++) d_V[bid*32*size + tid*size + i] = r_t[i];
   }
 }
 
@@ -368,11 +366,9 @@ extern "C" __global__ void interp(const CeedInt nelem, const int transpose, cons
   if (BASIS_DIM==1)
   {
     interp1d(nelem, transpose, c_B, d_U, d_V);
-  }else if (BASIS_DIM==2)
-  {
+  } else if (BASIS_DIM==2) {
     interp2d(nelem, transpose, c_B, d_U, d_V);
-  }else if (BASIS_DIM==3)
-  {
+  } else if (BASIS_DIM==3) {
     interp3d(nelem, transpose, c_B, d_U, d_V);
   }
 }   
