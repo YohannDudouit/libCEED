@@ -182,7 +182,7 @@ inline __device__ void ContractTranspose1d(const real *A, const real *B,
                                          int nB1, int nB2, real *T)
 {
 #pragma unroll
-    for (int l = 0; l < nA2*nB2; l++) T[l] = 0.0;
+    for (int l = 0; l < nB2; l++) T[l] = 0.0;
 #pragma unroll
             for (int b1 = 0; b1 < nB1; b1++)
 #pragma unroll
@@ -201,20 +201,26 @@ inline __device__ void interp1d(const CeedInt nelem, const int transpose, const 
   const int bid = blockIdx.x;
 
   if(bid*32+tid<nelem){
+    int size = !transpose? P1D : Q1D;
 #pragma unroll
-    for (int i = 0; i < P1D; i++)
-      r_V[i] = d_U[bid*32*P1D + 32*i + tid];
+    for (int i = 0; i < size; i++)
+      r_V[i] = d_U[bid*32*size + size*tid + i];
+//#pragma unroll
+//    for (int i = 0; i < size; i++)
+//      r_V[i] = d_U[bid*32*P1D + 32*i + tid];
 
     if(!transpose){
-      Contract2d(r_V, c_B, P1D, P1D, Q1D, r_t);
-      Contract2d(r_t, c_B, Q1D, P1D, Q1D, r_V);
+      Contract1d(r_V, c_B, P1D, P1D, Q1D, r_t);
     } else {
-      ContractTranspose2d(r_t, c_B, Q1D, P1D, Q1D, r_V);
-      ContractTranspose2d(r_V, c_B, P1D, P1D, Q1D, r_t);
+      ContractTranspose1d(r_V, c_B, Q1D, P1D, Q1D, r_t);
     }
     
+    size = transpose? P1D : Q1D;
+//#pragma unroll 
+//    for (int i = 0; i < size; i++) d_V[bid*32*size + i*32 + tid] = r_t[i];
+//  }  
 #pragma unroll 
-    for (int i = 0; i < P1D; i++) d_V[bid*32*P1D + i*32 + tid] = r_V[i];
+    for (int i = 0; i < size; i++) d_V[bid*32*size + tid*size + i] = r_t[i];
   }  
 }
 
@@ -263,20 +269,27 @@ inline __device__ void interp2d(const CeedInt nelem, const int transpose, const 
   const int bid = blockIdx.x;
 
   if(bid*32+tid<nelem){
+    int size = !transpose? P1D*P1D : Q1D*Q1D;
+//#pragma unroll
+//    for (int i = 0; i < size; i++)
+//      r_V[i] = d_U[bid*32*size + 32*i + tid];
 #pragma unroll
-    for (int i = 0; i < P1D*P1D; i++)
-      r_V[i] = d_U[bid*32*P1D*P1D + 32*i + tid];
+    for (int i = 0; i < size; i++)
+      r_V[i] = d_U[bid*32*size + tid*size + i];
 
     if(!transpose){
       Contract2d(r_V, c_B, P1D, P1D, P1D, Q1D, r_t);
       Contract2d(r_t, c_B, P1D, Q1D, P1D, Q1D, r_V);
     } else {
-      ContractTranspose2d(r_t, c_B, Q1D, Q1D, P1D, Q1D, r_V);
-      ContractTranspose2d(r_V, c_B, Q1D, P1D, P1D, Q1D, r_t);
+      ContractTranspose2d(r_V, c_B, Q1D, Q1D, P1D, Q1D, r_t);
+      ContractTranspose2d(r_t, c_B, Q1D, P1D, P1D, Q1D, r_V);
     }
     
+    size = transpose? P1D*P1D : Q1D*Q1D;
+//#pragma unroll 
+//    for (int i = 0; i < size; i++) d_V[bid*32*size + i*32 + tid] = r_V[i];
 #pragma unroll 
-    for (int i = 0; i < P1D*P1D; i++) d_V[bid*32*P1D*P1D + i*32 + tid] = r_V[i];
+    for (int i = 0; i < P1D*P1D; i++) d_V[bid*32*P1D*P1D + tid*P1D*P1D + i] = r_V[i];
   }  
 }
 
@@ -329,9 +342,10 @@ inline __device__ void interp3d(const CeedInt nelem, const int transpose, const 
   const int bid = blockIdx.x;
 
   if(bid*32+tid<nelem){
+    int size = !transpose? P1D*P1D*P1D : Q1D*Q1D*Q1D;
 #pragma unroll
-    for (int i = 0; i < P1D*P1D*P1D; i++)
-      r_V[i] = d_U[bid*32*P1D*P1D*P1D + 32*i + tid];
+    for (int i = 0; i < size; i++)
+      r_V[i] = d_U[bid*32*size + tid*size + i];
 
     if(!transpose){
       Contract3d(r_V, c_B, P1D, P1D, P1D, P1D, Q1D, r_t);
@@ -343,8 +357,9 @@ inline __device__ void interp3d(const CeedInt nelem, const int transpose, const 
       ContractTranspose3d(r_V, c_B, Q1D, P1D, P1D, P1D, Q1D, r_t);
     }
     
+    size = transpose? P1D*P1D*P1D : Q1D*Q1D*Q1D;
 #pragma unroll 
-    for (int i = 0; i < P1D*P1D*P1D; i++) d_V[bid*32*P1D*P1D*P1D + i*32 + tid] = r_t[i];
+    for (int i = 0; i < size; i++) d_V[bid*32*size + tid*size + i] = r_t[i];
   }
 }
 
@@ -508,7 +523,7 @@ int CeedBasisCreateTensorH1_Cuda(CeedInt dim, CeedInt P1d, CeedInt Q1d,
   ierr = CeedBasisGetCeed(basis, &ceed); CeedChk(ierr);
   ierr = CeedBasisSetData(basis, (void*)&data);
   CeedChk(ierr);
-  ierr = CeedSetBackendFunction(ceed, "Basis", basis, "Apply", CeedBasisApply_Cuda);
+  ierr = CeedSetBackendFunction(ceed, "Basis", basis, "Apply", CeedBasisApply_Cuda_3dreg);
   CeedChk(ierr);
   ierr = CeedSetBackendFunction(ceed, "Basis", basis, "Destroy", CeedBasisDestroy_Cuda);
   CeedChk(ierr);
