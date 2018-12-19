@@ -20,28 +20,31 @@
 #include "ceed-cuda.h"
 
 
-int compile(Ceed ceed, const char *source, CUmodule *module, const CeedInt numopts, ...) {
+int compile(Ceed ceed, const char *source, CUmodule *module,
+            const CeedInt numopts, ...) {
   int ierr;
   nvrtcProgram prog;
   CeedChk_Nvrtc(ceed, nvrtcCreateProgram(&prog, source, NULL, 0, NULL, NULL));
 
   const int optslen = 32;
   const int optsextra = 3;
-  char buf[numopts][optslen];
   const char *opts[numopts + optsextra];
-  va_list args;
-  va_start(args, numopts);
-  char *name;
-  int val;
-  for (int i = 0; i < numopts; i++) {
-    name = va_arg(args, char*);
-    val = va_arg(args, int);
-    snprintf(&buf[i][0], optslen,"-D%s=%d", name, val);
-    opts[i] = &buf[i][0];
+  char buf[numopts][optslen];
+  if (numopts>0) {
+    va_list args;
+    va_start(args, numopts);
+    char *name;
+    int val;
+    for (int i = 0; i < numopts; i++) {
+      name = va_arg(args, char*);
+      val = va_arg(args, int);
+      snprintf(&buf[i][0], optslen,"-D%s=%d", name, val);
+      opts[i] = &buf[i][0];
+    }
   }
-  opts[numopts] = "-DCeedScalar=double";
+  opts[numopts]     = "-DCeedScalar=double";
   opts[numopts + 1] = "-DCeedInt=int";
-  opts[numopts + 2] = "-arch=compute_60";
+  opts[numopts + 2] = "-arch=compute_60";//FIXME: Should take into account GPU CC
 
 
   nvrtcResult result = nvrtcCompileProgram(prog, numopts + optsextra, opts);
@@ -67,17 +70,19 @@ int compile(Ceed ceed, const char *source, CUmodule *module, const CeedInt numop
   return 0;
 }
 
-int get_kernel(Ceed ceed, CUmodule module, const char *name, CUfunction* kernel) {
+int get_kernel(Ceed ceed, CUmodule module, const char *name,
+               CUfunction* kernel) {
   CeedChk_Cu(ceed, cuModuleGetFunction(kernel, module, name));
   return 0;
 }
 
-int run_kernel(Ceed ceed, CUfunction kernel, const int gridSize, const int blockSize, void **args) {
+int run_kernel(Ceed ceed, CUfunction kernel, const int gridSize,
+               const int blockSize, void **args) {
   CeedChk_Cu(ceed, cuLaunchKernel(kernel,
-      gridSize, 1, 1,
-      blockSize, 1, 1,
-      0, NULL,
-      args, NULL));
+                                  gridSize, 1, 1,
+                                  blockSize, 1, 1,
+                                  0, NULL,
+                                  args, NULL));
   return 0;
 }
 
@@ -111,7 +116,8 @@ static int CeedInit_Cuda(const char *resource, Ceed ceed) {
                                 CeedBasisCreateH1_Cuda); CeedChk(ierr);
   ierr = CeedSetBackendFunction(ceed, "Ceed", ceed, "ElemRestrictionCreate",
                                 CeedElemRestrictionCreate_Cuda); CeedChk(ierr);
-  ierr = CeedSetBackendFunction(ceed, "Ceed", ceed, "ElemRestrictionCreateBlocked",
+  ierr = CeedSetBackendFunction(ceed, "Ceed", ceed,
+                                "ElemRestrictionCreateBlocked",
                                 CeedElemRestrictionCreateBlocked_Cuda); CeedChk(ierr);
   ierr = CeedSetBackendFunction(ceed, "Ceed", ceed, "QFunctionCreate",
                                 CeedQFunctionCreate_Cuda); CeedChk(ierr);
