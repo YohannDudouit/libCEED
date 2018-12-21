@@ -86,6 +86,8 @@ typedef struct {
   CeedScalar *d_interp1d;
   CeedScalar *d_grad1d;
   CeedScalar *d_qweight1d;
+  CeedScalar *c_B;
+  CeedScalar *c_G;
 } CeedBasis_Cuda;
 
 typedef struct {

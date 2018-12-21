@@ -35,10 +35,10 @@ CeedScalar *__restrict__ v) {
     s_interp1d[k] = interp1d[k];
   }
 
-  const CeedInt P = transpose ? BASIS_Q1D : BASIS_P1D;
-  const CeedInt Q = transpose ? BASIS_P1D : BASIS_Q1D;
-  const CeedInt stride0 = transpose ? 1 : BASIS_P1D;
-  const CeedInt stride1 = transpose ? BASIS_P1D : 1;
+  const CeedInt P = transpose ? Q1D : P1D;
+  const CeedInt Q = transpose ? P1D : Q1D;
+  const CeedInt stride0 = transpose ? 1 : P1D;
+  const CeedInt stride1 = transpose ? P1D : 1;
   const CeedInt u_stride = BASIS_NCOMP * (transpose ? BASIS_NQPT :
                                           BASIS_ELEMSIZE);
   const CeedInt v_stride = BASIS_NCOMP * (transpose ? BASIS_ELEMSIZE :
@@ -95,10 +95,10 @@ extern "C" __global__ void grad(const CeedInt nelem, const int transpose,
   }
 
 
-  const CeedInt P = transpose ? BASIS_Q1D : BASIS_P1D;
-  const CeedInt Q = transpose ? BASIS_P1D : BASIS_Q1D;
-  const CeedInt stride0 = transpose ? 1 : BASIS_P1D;
-  const CeedInt stride1 = transpose ? BASIS_P1D : 1;
+  const CeedInt P = transpose ? Q1D : P1D;
+  const CeedInt Q = transpose ? P1D : Q1D;
+  const CeedInt stride0 = transpose ? 1 : P1D;
+  const CeedInt stride1 = transpose ? P1D : 1;
   const CeedInt u_stride = BASIS_NCOMP * (transpose ? BASIS_NQPT * BASIS_DIM :
                                           BASIS_ELEMSIZE);
   const CeedInt v_stride = BASIS_NCOMP * (transpose ? BASIS_ELEMSIZE : BASIS_NQPT
@@ -150,24 +150,24 @@ extern "C" __global__ void grad(const CeedInt nelem, const int transpose,
 //   CeedInt pre = BASIS_NQPT;
 //   CeedInt post = 1;
 //   for (CeedInt d=0; d<BASIS_DIM; d++) {
-//     pre /= BASIS_Q1D;
+//     pre /= Q1D;
 //     for (CeedInt i=0; i<pre; i++) {
-//       for (CeedInt j=0; j<BASIS_Q1D; j++) {
+//       for (CeedInt j=0; j<Q1D; j++) {
 //         for (CeedInt k=0; k<post; k++) {
-//           v[(i*BASIS_Q1D + j)*post + k] = qweight1d[j] * (d == 0 ? 1 : v[(i*BASIS_Q1D + j)*post + k]);
+//           v[(i*Q1D + j)*post + k] = qweight1d[j] * (d == 0 ? 1 : v[(i*Q1D + j)*post + k]);
 //         }
 //       }
 //     }
-//     post *= BASIS_Q1D;
+//     post *= Q1D;
 //   }
 // }
 extern "C" __global__ void weight(const CeedInt nelem,
                                   const CeedScalar * __restrict__ qweight1d, CeedScalar * __restrict__ v) {
-  CeedScalar r_w = qweight1d[threadIdx.x%BASIS_Q1D];
+  CeedScalar r_w = qweight1d[threadIdx.x%Q1D];
   for (int q = blockIdx.x * blockDim.x + threadIdx.x;
-       q < nelem*BASIS_DIM*BASIS_Q1D;
+       q < nelem*BASIS_DIM*Q1D;
        q += blockDim.x * gridDim.x) {
-    if (threadIdx.x < BASIS_DIM*BASIS_Q1D) v[q] = r_w;
+    if (threadIdx.x < BASIS_DIM*Q1D) v[q] = r_w;
   }
 }
 );
@@ -176,18 +176,39 @@ extern "C" __global__ void weight(const CeedInt nelem,
 // 3dreg kernels
 static const char *kernels3dreg = QUOTE(
 
-typedef double real;
+typedef CeedScalar real;
 
-inline __device__ void readDofs(const int bid, const int tid, const int comp, const int size, const CeedScalar* d_U, real* r_U) {
+//Read non interleaved dofs
+inline __device__ void readDofs(const int bid, const int tid, const int comp, const int size, const int nelem, const CeedScalar* d_U, real* r_U) {
 #pragma unroll
       for (int i = 0; i < size; i++)
-        r_U[i] = d_U[bid*32*size + tid*BASIS_NCOMP*size + comp*size + i];
+        r_U[i] = d_U[i + tid*size + bid*32*size + comp*size*nelem ];
 }
 
-inline __device__ void writeDofs(const int bid, const int tid, const int comp, const int size, const CeedScalar* r_V, real* d_V) {
+//read interleaved quads
+inline __device__ void readQuads(const int bid, const int tid, const int comp, const int dim, const int size, const int nelem, const CeedScalar* d_U, real* r_U) {
+#pragma unroll
+      for (int i = 0; i < size; i++)
+        r_U[i] = d_U[tid + i*32 + bid*32*size + comp*nelem*size + dim*BASIS_NCOMP*nelem*size];
+}
+
+//Write non interleaved dofs
+inline __device__ void writeDofs(const int bid, const int tid, const int comp, const int size, const int nelem, const CeedScalar* r_V, real* d_V) {
 #pragma unroll 
       for (int i = 0; i < size; i++)
-        d_V[bid*32*size + tid*size*BASIS_NCOMP + comp*size + i] = r_V[i];
+        d_V[i + tid*size + bid*32*size + comp*size*nelem ] = r_V[i]; 
+}
+
+//Write interleaved quads
+inline __device__ void writeQuads(const int bid, const int tid, const int comp, const int dim, const int size, const int nelem, const CeedScalar* r_V, real* d_V) {
+#pragma unroll
+      for (int i = 0; i < size; i++)
+        d_V[tid + i*32 + bid*32*size + comp*nelem*size + dim*BASIS_NCOMP*nelem*size] = r_V[i]; 
+}
+
+inline __device__ void add(const int size, CeedScalar* r_V, const CeedScalar* r_U) {
+  for (int i = 0; i < size; i++)
+    r_V[i] += r_U[i];
 }
 
 //****
@@ -232,17 +253,49 @@ inline __device__ void interp1d(const CeedInt nelem, const int transpose, const 
 
   if(bid*32+tid<nelem){
     for(int comp=0; comp<BASIS_NCOMP; comp++) {
-      int size = !transpose? P1D : Q1D;
-      readDofs(bid, tid, comp, size, d_U, r_V);
-
       if(!transpose){
+        const int sizeU = P1D;
+        readDofs(bid, tid, comp, sizeU, nelem, d_U, r_V);
         Contract1d(r_V, c_B, P1D, P1D, Q1D, r_t);
+        const int sizeV = Q1D;
+        writeQuads(bid, tid, comp, 0, sizeV, nelem, r_t, d_V);
       } else {
+        const int sizeU = Q1D;
+        readQuads(bid, tid, comp, 0, sizeU, nelem, d_U, r_V);
         ContractTranspose1d(r_V, c_B, Q1D, P1D, Q1D, r_t);
+        const int sizeV = P1D;
+        writeDofs(bid, tid, comp, sizeV, nelem, r_t, d_V);
       }
-    
-      size = transpose? P1D : Q1D;
-      writeDofs(bid, tid, comp, size, r_t, d_V);
+    }
+  }
+}
+
+inline __device__ void grad1d(const CeedInt nelem, const int transpose, const CeedScalar *c_B, const CeedScalar *c_G, const CeedScalar * __restrict__ d_U, CeedScalar *__restrict__ d_V)
+{
+  real r_U[P1D];
+  real r_V[Q1D];
+
+  const int tid = threadIdx.x;
+  const int bid = blockIdx.x;
+  int dim;
+
+  if(bid*32+tid<nelem){
+    for(int comp=0; comp<BASIS_NCOMP; comp++) {
+      if(!transpose){
+        const int sizeU = P1D;
+        const int sizeV = Q1D;
+        readDofs(bid, tid, comp, sizeU, nelem, d_U, r_U);
+        Contract1d(r_U, c_G, P1D, P1D, Q1D, r_V);
+        dim = 0;
+        writeQuads(bid, tid, comp, dim, sizeV, nelem, r_V, d_V);
+      } else {
+        const int sizeU = Q1D;
+        const int sizeV = P1D;
+        dim = 0;
+        readQuads(bid, tid, comp, dim, sizeU, nelem, d_U, r_U);
+        ContractTranspose1d(r_U, c_G, Q1D, P1D, Q1D, r_V);
+        writeDofs(bid, tid, comp, sizeV, nelem, r_V, d_V);
+      }
     }
   }
 }
@@ -293,21 +346,65 @@ inline __device__ void interp2d(const CeedInt nelem, const int transpose, const 
 
   if(bid*32+tid<nelem){
     for(int comp=0; comp<BASIS_NCOMP; comp++) {
-      int size = !transpose? P1D*P1D : Q1D*Q1D;
-      readDofs(bid, tid, comp, size, d_U, r_V);
-
       if(!transpose){
+        const int sizeU = P1D*P1D;
+        readDofs(bid, tid, comp, sizeU, nelem, d_U, r_V);
         Contract2d(r_V, c_B, P1D, P1D, P1D, Q1D, r_t);
         Contract2d(r_t, c_B, P1D, Q1D, P1D, Q1D, r_V);
+        const int sizeV = Q1D*Q1D;
+        writeQuads(bid, tid, comp, 0, sizeV, nelem, r_t, d_V);
       } else {
+        const int sizeU = Q1D*Q1D;
+        readQuads(bid, tid, comp, 0, sizeU, nelem, d_U, r_V);
         ContractTranspose2d(r_V, c_B, Q1D, Q1D, P1D, Q1D, r_t);
         ContractTranspose2d(r_t, c_B, Q1D, P1D, P1D, Q1D, r_V);
+        const int sizeV = P1D*P1D;
+        writeDofs(bid, tid, comp, sizeV, nelem, r_V, d_V);
       }
-    
-      size = transpose? P1D*P1D : Q1D*Q1D;
-      writeDofs(bid, tid, comp, size, r_V, d_V);
     }
   }  
+}
+
+inline __device__ void grad2d(const CeedInt nelem, const int transpose, const CeedScalar *c_B, const CeedScalar *c_G, const CeedScalar * __restrict__ d_U, CeedScalar *__restrict__ d_V)
+{
+  real r_U[P1D*P1D];
+  real r_V[Q1D*Q1D];
+  real r_t[Q1D*Q1D];
+
+  const int tid = threadIdx.x;
+  const int bid = blockIdx.x;
+  int dim;
+
+  if(bid*32+tid<nelem){
+    for(int comp=0; comp<BASIS_NCOMP; comp++) {
+      if(!transpose){
+        const int sizeU = P1D*P1D;
+        const int sizeV = Q1D*Q1D;
+        readDofs(bid, tid, comp, sizeU, nelem, d_U, r_U);
+        Contract2d(r_U, c_G, P1D, P1D, P1D, Q1D, r_t);
+        Contract2d(r_t, c_B, P1D, Q1D, P1D, Q1D, r_V); 
+        dim = 0;
+        writeQuads(bid, tid, comp, dim, sizeV, nelem, r_V, d_V);
+        Contract2d(r_U, c_B, P1D, P1D, P1D, Q1D, r_t);
+        Contract2d(r_t, c_G, P1D, Q1D, P1D, Q1D, r_V); 
+        dim = 1;
+        writeQuads(bid, tid, comp, dim, sizeV, nelem, r_V, d_V);
+      } else {
+        const int sizeU = Q1D*Q1D;
+        const int sizeV = P1D*P1D;
+        dim = 0;
+        readQuads(bid, tid, comp, dim, sizeU, nelem, d_U, r_U);
+        ContractTranspose2d(r_U, c_G, Q1D, Q1D, P1D, Q1D, r_t);
+        ContractTranspose2d(r_t, c_B, Q1D, P1D, P1D, Q1D, r_V);
+        dim = 1;
+        readQuads(bid, tid, comp, dim, sizeU, nelem, d_U, r_U);
+        ContractTranspose2d(r_U, c_B, Q1D, Q1D, P1D, Q1D, r_t);
+        ContractTranspose2d(r_t, c_G, Q1D, P1D, P1D, Q1D, r_U);
+        add(sizeV, r_V, r_U);
+        writeDofs(bid, tid, comp, sizeV, nelem, r_V, d_V);
+      }
+    }
+  }
 }
 
 //****
@@ -360,21 +457,80 @@ inline __device__ void interp3d(const CeedInt nelem, const int transpose, const 
 
   if(bid*32+tid<nelem){
     for(int comp=0; comp<BASIS_NCOMP; comp++) {
-      int size = !transpose? P1D*P1D*P1D : Q1D*Q1D*Q1D;
-      readDofs(bid, tid, comp, size, d_U, r_V);
-
       if(!transpose){
+        const int sizeU = P1D*P1D*P1D;
+        const int sizeV = Q1D*Q1D*Q1D;
+        readDofs(bid, tid, comp, sizeU, nelem, d_U, r_V);
         Contract3d(r_V, c_B, P1D, P1D, P1D, P1D, Q1D, r_t);
         Contract3d(r_t, c_B, P1D, P1D, Q1D, P1D, Q1D, r_V); 
         Contract3d(r_V, c_B, P1D, Q1D, Q1D, P1D, Q1D, r_t);
+        writeQuads(bid, tid, comp, 0, sizeV, nelem, r_t, d_V);
       } else {
+        const int sizeU = Q1D*Q1D*Q1D;
+        const int sizeV = P1D*P1D*P1D;
+        readQuads(bid, tid, comp, 0, sizeU, nelem, r_t, d_V);
         ContractTranspose3d(r_V, c_B, Q1D, Q1D, Q1D, P1D, Q1D, r_t);
         ContractTranspose3d(r_t, c_B, Q1D, Q1D, P1D, P1D, Q1D, r_V);
         ContractTranspose3d(r_V, c_B, Q1D, P1D, P1D, P1D, Q1D, r_t);
+        writeDofs(bid, tid, comp, sizeV, nelem, r_t, d_V);
       }
- 
-      size = transpose? P1D*P1D*P1D : Q1D*Q1D*Q1D;
-      writeDofs(bid, tid, comp, size, r_t, d_V);
+    }
+  }
+}
+
+inline __device__ void grad3d(const CeedInt nelem, const int transpose, const CeedScalar *c_B, const CeedScalar *c_G, const CeedScalar * __restrict__ d_U, CeedScalar *__restrict__ d_V)
+{
+  real r_U[P1D*P1D*P1D];
+  real r_V[Q1D*Q1D*Q1D];
+  real r_t[Q1D*Q1D*Q1D];
+
+  const int tid = threadIdx.x;
+  const int bid = blockIdx.x;
+  int dim;
+
+  if(bid*32+tid<nelem){
+    for(int comp=0; comp<BASIS_NCOMP; comp++) {
+      if(!transpose){
+        const int sizeU = P1D*P1D*P1D;
+        const int sizeV = Q1D*Q1D*Q1D;
+        readDofs(bid, tid, comp, sizeU, nelem, d_U, r_U);
+        Contract3d(r_U, c_G, P1D, P1D, P1D, P1D, Q1D, r_V);
+        Contract3d(r_V, c_B, P1D, P1D, Q1D, P1D, Q1D, r_t); 
+        Contract3d(r_t, c_B, P1D, Q1D, Q1D, P1D, Q1D, r_V);
+        dim = 0;
+        writeQuads(bid, tid, comp, dim, sizeV, nelem, r_V, d_V);
+        Contract3d(r_U, c_B, P1D, P1D, P1D, P1D, Q1D, r_V);
+        Contract3d(r_V, c_G, P1D, P1D, Q1D, P1D, Q1D, r_t); 
+        Contract3d(r_t, c_B, P1D, Q1D, Q1D, P1D, Q1D, r_V);
+        dim = 1;
+        writeQuads(bid, tid, comp, dim, sizeV, nelem, r_V, d_V);
+        Contract3d(r_U, c_B, P1D, P1D, P1D, P1D, Q1D, r_V);
+        Contract3d(r_V, c_B, P1D, P1D, Q1D, P1D, Q1D, r_t); 
+        Contract3d(r_t, c_G, P1D, Q1D, Q1D, P1D, Q1D, r_V);
+        dim = 2;
+        writeQuads(bid, tid, comp, dim, sizeV, nelem, r_V, d_V);
+      } else {
+        const int sizeU = Q1D*Q1D*Q1D;
+        const int sizeV = P1D*P1D*P1D;
+        dim = 0;
+        readQuads(bid, tid, comp, dim, sizeU, nelem, d_U, r_U);
+        ContractTranspose3d(r_U, c_G, Q1D, Q1D, Q1D, P1D, Q1D, r_t);
+        ContractTranspose3d(r_t, c_B, Q1D, Q1D, P1D, P1D, Q1D, r_U);
+        ContractTranspose3d(r_U, c_B, Q1D, P1D, P1D, P1D, Q1D, r_V);
+        dim = 1;
+        readQuads(bid, tid, comp, dim, sizeU, nelem, d_U, r_U);
+        ContractTranspose3d(r_U, c_B, Q1D, Q1D, Q1D, P1D, Q1D, r_t);
+        ContractTranspose3d(r_t, c_G, Q1D, Q1D, P1D, P1D, Q1D, r_U);
+        ContractTranspose3d(r_U, c_B, Q1D, P1D, P1D, P1D, Q1D, r_t);
+        add(sizeV, r_V, r_t);
+        dim = 2;
+        readQuads(bid, tid, comp, dim, sizeU, nelem, d_U, r_U);
+        ContractTranspose3d(r_U, c_B, Q1D, Q1D, Q1D, P1D, Q1D, r_t);
+        ContractTranspose3d(r_t, c_B, Q1D, Q1D, P1D, P1D, Q1D, r_U);
+        ContractTranspose3d(r_U, c_G, Q1D, P1D, P1D, P1D, Q1D, r_t);
+        add(sizeV, r_V, r_t);
+        writeDofs(bid, tid, comp, sizeV, nelem, r_V, d_V);
+      }
     }
   }
 }
@@ -391,9 +547,28 @@ extern "C" __global__ void interp(const CeedInt nelem, const int transpose, cons
   }
 }   
 
-);
+extern "C" __global__ void grad(const CeedInt nelem, const int transpose, const CeedScalar *c_B, const CeedScalar *c_G, const CeedScalar * __restrict__ d_U, CeedScalar *__restrict__ d_V)
+{
+  if (BASIS_DIM==1)
+  {
+    grad1d(nelem, transpose, c_B, c_G, d_U, d_V);
+  } else if (BASIS_DIM==2) {
+    grad2d(nelem, transpose, c_B, c_G, d_U, d_V);
+  } else if (BASIS_DIM==3) {
+    grad3d(nelem, transpose, c_B, c_G, d_U, d_V);
+  }
+}
 
-                                  );
+extern "C" __global__ void weight(const CeedInt nelem, const CeedScalar * __restrict__ qweight1d, CeedScalar * __restrict__ v) {
+  CeedScalar r_w = qweight1d[threadIdx.x%Q1D];
+  for (int q = blockIdx.x * blockDim.x + threadIdx.x;
+       q < nelem*BASIS_DIM*Q1D;
+       q += blockDim.x * gridDim.x) {
+    if (threadIdx.x < BASIS_DIM*Q1D) v[q] = r_w;
+  }
+}
+
+);
 
 int CeedBasisApply_Cuda(CeedBasis basis, const CeedInt nelem,
                         CeedTransposeMode tmode,
@@ -439,7 +614,8 @@ int CeedBasisApply_Cuda(CeedBasis basis, const CeedInt nelem,
   return 0;
 }
 
-int initInterp(CeedScalar* d_B, CeedInt P1d, CeedInt Q1d, CeedScalar** c_B);
+//int initInterp(CeedScalar* d_B, CeedInt P1d, CeedInt Q1d, CeedScalar** c_B);
+int initInterp(CeedScalar* d_B, CeedScalar* d_G, CeedInt P1d, CeedInt Q1d, CeedScalar** c_B_ptr, CeedScalar** c_G_ptr);
 
 int CeedBasisApply_Cuda_3dreg(CeedBasis basis, const CeedInt nelem, CeedTransposeMode tmode,
     CeedEvalMode emode, CeedVector u, CeedVector v) {
@@ -466,17 +642,17 @@ int CeedBasisApply_Cuda_3dreg(CeedBasis basis, const CeedInt nelem, CeedTranspos
     ierr = cudaMemset(d_v, 0, v->length * sizeof(CeedScalar)); CeedChk(ierr);
   }
   if (emode == CEED_EVAL_INTERP) {
-    CeedScalar* c_B;
-    ierr = initInterp(data->d_interp1d, basis->P1d, basis->Q1d, &c_B); CeedChk(ierr);
-    void *interpargs[] = {(void*)&nelem, (void*)&transpose, &c_B, &d_u, &d_v};
+    void *interpargs[] = {(void*)&nelem, (void*)&transpose, &data->c_B, &d_u, &d_v};
     //void *interpargs[] = {(void*)&nelem, (void*)&transpose, &data->d_interp1d, &d_u, &d_v};
     ierr = run_kernel(ceed, data->interp, gridsize, blocksize, interpargs); CeedChk(ierr);
   } else if (emode == CEED_EVAL_GRAD) {
+    void *gradargs[] = {(void*)&nelem, (void*)&transpose, &data->c_B, &data->c_G, &d_u, &d_v};
+    ierr = run_kernel(ceed, data->grad, gridsize, blocksize, gradargs); CeedChk(ierr);
     // void *gradargs[] = {(void*)&nelem, (void*)&transpose, &data->d_interp1d, &data->d_grad1d, &d_u, &d_v};
     // ierr = run_kernel(ceed, data->grad, nelem, blocksize, gradargs); CeedChk(ierr);
   } else if (emode == CEED_EVAL_WEIGHT) {
-    // void *weightargs[] = {&data->d_qweight1d, &d_v};
-    // ierr = run_kernel(ceed, data->weight, 1, 1, weightargs); CeedChk(ierr);
+    void *weightargs[] = {&data->d_qweight1d, &d_v};
+    ierr = run_kernel(ceed, data->weight, nelem, basis->Q, weightargs); CeedChk(ierr);
   }
 
   if(emode!=CEED_EVAL_WEIGHT){
@@ -528,9 +704,9 @@ int CeedBasisCreateTensorH1_Cuda(CeedInt dim, CeedInt P1d, CeedInt Q1d,
   ierr = cudaMemcpy(data->d_grad1d, basis->grad1d, iBytes,
                     cudaMemcpyHostToDevice); CeedChk(ierr);
 
-  ierr = compile(basis->ceed, basiskernels, &data->module, 7,
-                 "BASIS_Q1D", basis->Q1d,
-                 "BASIS_P1D", basis->P1d,
+  ierr = compile(basis->ceed, kernels3dreg, &data->module, 7,
+                 "Q1D", basis->Q1d,
+                 "P1D", basis->P1d,
                  "BASIS_BUF_LEN", basis->ncomp * CeedIntPow(basis->Q1d > basis->P1d ?
                      basis->Q1d : basis->P1d, basis->dim),
                  "BASIS_DIM", basis->dim,
@@ -538,6 +714,7 @@ int CeedBasisCreateTensorH1_Cuda(CeedInt dim, CeedInt P1d, CeedInt Q1d,
                  "BASIS_ELEMSIZE", CeedIntPow(basis->P1d, basis->dim),
                  "BASIS_NQPT", CeedIntPow(basis->Q1d, basis->dim)
                 ); CeedChk(ierr);
+  ierr = initInterp(data->d_interp1d, data->d_grad1d, basis->P1d, basis->Q1d, &data->c_B, &data->c_G); CeedChk(ierr);
   ierr = get_kernel(basis->ceed, data->module, "interp", &data->interp);
   CeedChk(ierr);
   ierr = get_kernel(basis->ceed, data->module, "grad", &data->grad);
