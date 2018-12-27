@@ -184,7 +184,8 @@ typedef CeedScalar real;
 inline __device__ void readDofs(const int bid, const int tid, const int comp, const int size, const int nelem, const CeedScalar* d_U, real* r_U) {
 #pragma unroll
       for (int i = 0; i < size; i++)
-        r_U[i] = d_U[i + tid*size + bid*32*size + comp*size*nelem ];
+        //r_U[i] = d_U[i + tid*size + bid*32*size + comp*size*nelem ];
+        r_U[i] = d_U[i + comp*size + tid*BASIS_NCOMP*size + bid*32*BASIS_NCOMP*size ];
 }
 
 //read interleaved quads
@@ -199,14 +200,15 @@ inline __device__ void readQuads(const int bid, const int tid, const int comp, c
 inline __device__ void writeDofs(const int bid, const int tid, const int comp, const int size, const int nelem, const CeedScalar* r_V, real* d_V) {
 #pragma unroll 
       for (int i = 0; i < size; i++)
-        d_V[i + tid*size + bid*32*size + comp*size*nelem ] = r_V[i]; 
+        //d_V[i + tid*size + bid*32*size + comp*size*nelem ] = r_V[i]; 
+        d_V[i + comp*size + tid*BASIS_NCOMP*size + bid*32*BASIS_NCOMP*size ] = r_V[i];
 }
 
 //Write interleaved quads
 inline __device__ void writeQuads(const int bid, const int tid, const int comp, const int dim, const int size, const int nelem, const CeedScalar* r_V, real* d_V) {
 #pragma unroll
       for (int i = 0; i < size; i++)
-        d_V[i + tid*size + bid*32*size + comp*size*nelem + dim*BASIS_NCOMP*nelem*size ] = r_V[i]; 
+        d_V[i + tid*size + bid*32*size + comp*size*nelem + dim*BASIS_NCOMP*nelem*size ] = r_V[i];
         //d_V[tid + i*32 + bid*32*size + comp*nelem*size + dim*BASIS_NCOMP*nelem*size] = r_V[i]; 
 }
 
